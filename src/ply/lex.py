@@ -33,6 +33,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # -----------------------------------------------------------------------------
 
+from types import FrameType
+from builtins import TypeError
+from builtins import isinstance
+from re import Match
 import re
 import sys
 import types
@@ -151,7 +155,7 @@ class Lexer:
         self.lexliterals = ''
         self.lexmodule = None
         self.lineno = 1
-        self.lexmatch = None
+        self.lexmatch: Optional[Match] = None 
     def clone(self, object: Optional[Any] = None) -> "Lexer":
         c: Lexer = copy.copy(self)
         if object:
@@ -303,7 +307,7 @@ class Lexer:
                 self.lexpos = lexpos
                 raise LexError(f"Illegal character {illegal_char!r} at index {lexpos}", illegal_slice)
 
-        if self.lexeoff:
+        if callable(self.lexeoff):
             tok = LexToken()
             tok.type = 'eof'
             tok.value = ''
@@ -311,7 +315,11 @@ class Lexer:
             tok.lexpos = lexpos
             tok.lexer = self
             self.lexpos = lexpos
-            newtok = self.lexeoff(tok)
+            eof_handler_result: Any = self.lexeoff(tok)
+            if isinstance(eof_handler_result, LexToken) or eof_handler_result is None:
+                newtok = eof_handler_result
+            else:
+                raise TypeError("eoff function must return a LexToken or None")
             return newtok
 
         self.lexpos = lexpos + 1
@@ -324,7 +332,7 @@ class Lexer:
         return self
 
     def __next__(self) -> LexToken:
-        t = self.token()
+        t: Optional[LexToken] = self.token()
         if t is None:
             raise StopIteration
         return t
@@ -353,7 +361,7 @@ def _get_regex(func: Any) -> Optional[str]:
 # associated with the yacc() call if none was provided.
 # -----------------------------------------------------------------------------
 def get_caller_module_dict(levels: int) -> dict[str, Any]:
-    f = sys._getframe(levels)
+    f: FrameType = sys._getframe(levels)
     return { **f.f_globals, **f.f_locals }
 
 # -----------------------------------------------------------------------------
@@ -366,16 +374,16 @@ def get_caller_module_dict(levels: int) -> dict[str, Any]:
 def _form_master_re(relist: list[str], reflags: int, ldict: dict[str, Any], toknames: dict[str, str]) -> tuple[list[Any], list[str], list[Any]]:
     if not relist:
         return [], [], []
-    regex = '|'.join(relist)
+    regex: str = '|'.join(relist)
     try:
-        lexre = re.compile(regex, reflags)
+        lexre: Pattern[str] = re.compile(regex, reflags)
 
         # Build the index to function map for the matching engine
-        lexindexfunc = [None] * (max(lexre.groupindex.values()) + 1)
-        lexindexnames = lexindexfunc[:]
+        lexindexfunc: list[Optional[tuple[Optional[Callable[..., Any]], Optional[str]]]] = [None for _ in range(max(lexre.groupindex.values()) + 1)]
+        lexindexnames: list[Optional[str]] = [None for _ in range(len(lexindexfunc))]
 
         for f, i in lexre.groupindex.items():
-            handle = ldict.get(f, None)
+            handle: Optional[Any] = ldict.get(f, None)
             if type(handle) in (types.FunctionType, types.MethodType):
                 lexindexfunc[i] = (handle, toknames[f])
                 lexindexnames[i] = f
@@ -388,7 +396,7 @@ def _form_master_re(relist: list[str], reflags: int, ldict: dict[str, Any], tokn
 
         return [(lexre, lexindexfunc)], [regex], [lexindexnames]
     except Exception:
-        m = (len(relist) // 2) + 1
+        m: int = (len(relist) // 2) + 1
         llist, lre, lnames = _form_master_re(relist[:m], reflags, ldict, toknames)
         rlist, rre, rnames = _form_master_re(relist[m:], reflags, ldict, toknames)
         return (llist+rlist), (lre+rre), (lnames+rnames)
@@ -402,20 +410,20 @@ def _form_master_re(relist: list[str], reflags: int, ldict: dict[str, Any], tokn
 # calling this with s = "t_foo_bar_SPAM" might return (('foo','bar'),'SPAM')
 # -----------------------------------------------------------------------------
 def _statetoken(s: str, names: dict[str, Any]) -> tuple[tuple[str, ...], str]:
-    parts = s.split('_')
+    parts: list[str] = s.split('_')
     for i, part in enumerate(parts[1:], 1):
         if part not in names and part != 'ANY':
             break
 
     if i > 1:
-        states = tuple(parts[1:i])
+        states: tuple[str, ...] = tuple(parts[1:i])
     else:
         states = ('INITIAL',)
 
     if 'ANY' in states:
         states = tuple(names)
 
-    tokenname = '_'.join(parts[i:])
+    tokenname: str = '_'.join(parts[i:])
     return (states, tokenname)
 
 
@@ -462,7 +470,7 @@ class LexerReflect(object):
         self.validate_rules()
         return self.error
     def get_tokens(self) -> None:
-        tokens = self.ldict.get('tokens', None)
+        tokens: Optional[Any] = self.ldict.get('tokens', None)
         if not tokens:
             self.log.error('No token list is defined')
             self.error = True
@@ -478,11 +486,11 @@ class LexerReflect(object):
             self.error = True
             return
 
-        self.tokens = tokens
+        self.tokens = list(tokens)
 
     # Validate the tokens
     def validate_tokens(self) -> None:
-        terminals = {}
+        terminals: dict[str, int] = {}
         for n in self.tokens:
             if not _is_identifier.match(n):
                 self.log.error(f"Bad token name {n!r}")
